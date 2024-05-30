@@ -1,0 +1,586 @@
+---
+title: "Evaluating the quality of synthetic data"
+subtitle: "A density ratio approach"
+author: Thom Benjamin Volker
+format: 
+  revealjs:
+    slide-number: true
+    df-print: kable
+---
+
+## Imagine ...
+
+![Getty Images](files/segregation.jpg)
+
+::: {.notes}
+
+- You're a researcher, researching segregation
+- Working with CBS, you've constructed a dataset
+- Demographic information, like age, gender, income, ethnicity
+- Where do you live, for how long do you live here?
+- Who are important in your live (+ description)?
+
+- With these data, you could answer many questions. You can use it for your own research, but also for other researchers these data are super useful.
+- With it, they can answer their own research questions, replicate your research, learn from your cool data analysis, test new models, use it in education. 
+- So you'll share the data and everybody is happy, right?
+
+:::
+
+# That would be a privacy disaster!
+
+::: {.notes}
+
+Perhaps, synthetic data could provide a solution. 
+However, to fully exploit the benefits of synthetic data, it has to be safe, from a privacy perspective, and it has to be of sufficient quality.
+Today, I'll mainly focus on the latter part, and tell you a bit about the generation of synthetic data, and about my research on how to evaluate it's quality.
+
+:::
+
+## Who am I?
+
+<br>
+
+Thom Volker ([t.b.volker@uu.nl](mailto:t.b.volker@uu.nl))
+
+:::: {.columns}
+
+::: {.column width="40%"}
+![](files/me_square.jpg)
+:::
+
+::: {.column width="60%"}
+- MSc. in Methododology and Statistics & Sociology
+
+- PhD-candidate at Utrecht University and Statistics Netherlands
+
+  - Project: Contributing to the development of safe and high-quality synthetic data
+
+:::
+
+::::
+
+## Open materials
+
+This presentation can be found online at
+
+[https://thomvolker.github.io/synth-utility](https://thomvolker.github.io/synth-utility)
+
+All source code and data can be found at
+
+[https://github.com/thomvolker/synth-utility](https://github.com/thomvolker/synth-utility)
+
+::: aside
+
+Stimulating discussions with Erik-Jan van Kesteren, Peter-Paul de Wolf, Gerko Vink, and Stef van Buuren, which gave rise to the presented ideas, are gratefully acknowledged.
+
+:::
+
+# Synthetic data
+
+_Fake data, generated data, simulated data, digital twins_
+
+::: {.notes}
+
+As opposed to real, collected data that arises from complex phenomena that happen in the real world.
+
+:::
+
+## Creating synthetic data
+
+Synthetic data is created with a generative model
+
+$$p(\boldsymbol{X} | \theta)$$
+
+- A model $f$ for the data $\boldsymbol{X}$;
+
+- With parameters $\theta$;
+
+- Estimated on real data
+
+::: {.callout-tip title="Definition"}
+
+Generative models learn the distribution of the data $\boldsymbol{X}$ given the parameters $\theta$.
+
+::: 
+
+## Examples of generative models
+
+A normal distribution with parameters $\theta = \{\mu, \sigma\}$.
+
+- In `R`: `rnorm(n = 100, mean = 1, sd = 2)`
+
+<br>
+
+A histogram with bins and proportions.
+
+<br>
+
+Sequential prediction models for a multivariate distribution.
+
+<br>
+
+A neural network with thousands of parameters.
+
+## Generating synthetic data with `mice`
+
+```{r}
+#| echo: true
+#| message: false
+#| output: false
+
+library(mice)
+
+emptydat <- mtcars
+emptydat[1:nrow(mtcars), 1:ncol(mtcars)] <- NA
+dat <- rbind(mtcars, emptydat)
+
+fit <- mice(
+  dat, 
+  m = 1, 
+  maxit = 1, 
+  predictorMatrix = lower.tri(diag(ncol(dat))),
+  ignore = rep(c(FALSE, TRUE), each = nrow(mtcars)),
+  seed = 123
+)
+```
+
+## Generating synthetic data with mice {.smaller}
+
+**Observed data**
+
+```{r}
+syn <- complete(fit, 1)[(nrow(mtcars) + 1):nrow(dat), ]
+head(mtcars, 3)
+```
+
+<br>
+
+**Synthetic data**
+
+```{r}
+head(syn, 3)
+```
+
+# Generating synthetic data is easy
+
+But generating high-quality synthetic data is hard!
+
+## The synthetic data generation cycle
+
+1. Create synthetic data with simple models
+
+2. Evaluate the quality of the synthetic data
+
+3. Add complexities where necessary (transformations, interactions, non-linear relations)
+
+4. Iterate between (2.) and (3.) until the synthetic data is of sufficient quality
+
+::: {.aside}
+*Note.* Privacy can be built into the modelling steps, or evaluated separately (although the latter is quite hard).
+:::
+
+# Evaluating the utility of synthetic data
+
+##
+
+**Intuitively**
+
+- Can we use the synthetic data for the same purposes as the real data?
+
+- Does the synthetic data have the same properties as the real data?
+
+**Practically**
+
+- Do analyses on the synthetic data yield similar results as on the real data?
+
+- Can we distinguish the synthetic data from the real data?
+
+# The utility of synthetic data depends on what it's used for
+
+But we rarely know what the data will be used for...
+
+## Global utility measures
+
+**If the synthetic and observed data have similar distributions, they should yield similar results.**
+
+```{r}
+#| out-width: 60%
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(patchwork)
+library(purrr)
+
+ggplot() +
+  stat_function(fun = dnorm, args = list(mean = 1, sd = 1),
+                col = "lightblue", linewidth = 1, linetype = 1) +
+  stat_function(fun = dnorm, args = list(mean = 0, sd = sqrt(2)),
+                col = "navy", linewidth = 1, linetype = 4) +
+  theme_void() +
+  xlim(-5, 5) +
+  ylim(0, 0.5) +
+  ylab(NULL)
+```
+
+::: {.aside}
+But note that two data sets with very different distributions can still yield similar results for specific analyses.
+:::
+
+## Existing global utility measures: $pMSE$
+
+1. Bind synthetic and observed data together
+
+2. Predict for each observation the probability $\pi_i$ that it is synthetic
+
+3. Calculate $pMSE$ as $\sum^N_{i=1} (\pi_i - c)^2/N$, with $c = n_{\text{syn}} / (n_{\text{syn}} + n_{\text{obs}})$
+
+4. Compare $pMSE$ with the expected value under a correct generative model
+
+
+# $pMSE$
+
+Intuitive and flexible, easy to calculate
+
+Sometimes too simple
+
+Model specification can be difficult
+
+# A density ratio framework
+
+Density ratios^[See _Masashi, Suzuki & Kanamori (2012). Density ratio estimation in machine learning._] as a utility measure
+
+<br>
+
+$$r(x) = \frac{p(\boldsymbol{X}_{\text{obs}})}{p(\boldsymbol{X}_{\text{syn}})}$$
+<br>
+<br>
+
+::: {.notes}
+Let's go back to the observation that synthetic data has high quality if it's distribution is similar to the the distribution of the observed data, i.e., if we cannot distinguish the two distributions.
+We can express this trait as a ratio. If the ratio is large, there are too few synthetic data points in a region where there are many observed data points, and if the ratio is small, there too many synthetic observations in a region with relatively few observed cases.
+This can be done on a univariate level, variable by variable, but this ratio can also be estimated for the multivariate distributions of the observed and synthetic data.
+The density ratio can be estimated by estimating the probability distributions of the observed and synthetic data separately, and then taking the ratio.
+However, this method has the disadvantage that estimation errors are made for both probability distributions, and taking the ratio of these estimated probability magnifies these errors.
+Research in this field showed that you can obtain better estimates of the density ratio by estimating these directly, without estimating the densities separately.
+:::
+
+## Density ratios
+
+```{r}
+dlaplace <- function(x, mu = 0, sd = 1) exp(-abs(x-mu)/(sd / sqrt(2))) / (2*(sd / sqrt(2)))
+dratio_lap_norm <- function(x, mu = 0, sd = 1) {
+  dlaplace(x, mu, sd) / dnorm(x, mu, sd)
+}
+
+ggplot() +
+  stat_function(fun = dlaplace, args = list(mu = 0, sd = 1),
+                col = "lightblue", linewidth = 1, linetype = 1) +
+  stat_function(fun = dnorm, args = list(mean = 0, sd = 1),
+                col = "navy", linewidth = 1, linetype = 4) +
+  xlim(-5, 5) +
+  ylim(0, 0.8) +
+  theme_classic() +
+  ylab(NULL) +
+ggplot() +
+  stat_function(fun = dratio_lap_norm, args = list(mu = 0, sd = 1),
+                linewidth = 1, linetype = 1) +
+  xlim(-5, 5) +
+  ylim(0, 2) +
+  theme_classic() +
+  ylab(NULL) +
+ggplot() +
+  stat_function(fun = dnorm, args = list(mean = 0, sd = 1),
+                col = "lightblue", linewidth = 1, linetype = 1) +
+  stat_function(fun = dnorm, args = list(mean = 0, sd = 1),
+                col = "navy", linewidth = 1, linetype = 4) +
+  xlim(-5, 5) +
+  ylim(0, 0.8) +
+  theme_classic() +
+  ylab(NULL) +
+ggplot() +
+  geom_abline(intercept = 1, slope = 0, linewidth = 1, linetype = 1) +
+  theme_classic() +
+  xlim(-5, 5) +
+  ylim(0, 2) +
+  ylab(NULL)
+```
+
+
+## Estimating density ratios
+
+1. Estimate the density ratio using a non-parametric method
+
+- Implemented in the `R`-package [`densityratio`](https://github.com/thomvolker/densityratio).
+
+2. Calculate a discrepancy measure for the synthetic data (Kullback-Leibler divergence, Pearson divergence)
+
+3. Compare the divergence measure for different data sets
+
+4. Optionally: Test the null hypothesis $p(\boldsymbol{X}_{\text{syn}}) = p(\boldsymbol{X}_{\text{obs}})$ using a permutation test.
+
+## Estimating density ratios in `R`
+
+```{r}
+#| echo: true
+
+library(densityratio)
+dr <- ulsif(mtcars, syn)
+summary(dr, test = TRUE)
+```
+
+## Estimating density ratios in `R`
+
+```{r}
+#| echo: false
+#| results: false
+
+plot_univariate(dr, "hp")
+```
+
+
+
+## Density ratios for synthetic data (univariate)
+
+```{r}
+#| cache: true
+load("results/sim1.RData")
+
+# Create figure
+sims |>
+  unnest(c(xpreds, ypreds)) |>
+  group_by(model, xpreds) |>
+  mutate(ymean = mean(ypreds)) |>
+  ggplot(aes(x = xpreds, y = ypreds, group = interaction(model, sim))) +
+  geom_line(alpha = 0.1, col = "steelblue3") +
+  geom_line(aes(y = ymean, group = model, linetype = "B"),
+              size = 0.3,
+              col = "black") +
+  geom_line(data = true_ratio |> unnest(c(xpreds, ypreds)), 
+            aes(x = xpreds, y = ypreds, group = NULL, linetype = "A"), 
+            col = "black") +
+  facet_wrap(~model, labeller = label_parsed) +
+  ylim(0, 6) +
+  theme_minimal() +
+  xlab(expression(italic(x))) +
+  ylab(expression(hat(italic(r))(x))) +
+  scale_linetype_manual(
+    values = c("A" = "solid", "B" = "dashed"),
+    labels = c("A" = "True density ratio", 
+               "B" = "Locally weighted average density ratio"),
+    name = "") +
+  theme(legend.position = "bottom",
+        text = element_text(family = "LM Roman 10"))
+```
+
+## Density ratios for synthetic data (multivariate) {.smaller}
+
+**Observed data distribution**
+
+$$
+\begin{aligned}
+X_{1:4} &\sim \mathcal{MVN}(\mathbf{\mu}, \mathbf{\Sigma}), ~~
+X_5 \sim \mathcal{N}(X_1^2, V[X_1^2])\\
+X_{1:20} &\sim \mathcal{MVN}(\mathbf{\mu}, \mathbf{\Sigma}), ~~
+X_{20+i} \sim \mathcal{N}(X_i^{(i+1)}, V[X_i^{(i+1)}]) ~~~~~~~~ \text{for } i \in 1, \dots, 5 \\
+&\mathbf{\mu} = \begin{bmatrix} 0 \\ \vdots \\ 0 \end{bmatrix}, 
+\mathbf{\Sigma} = \begin{bmatrix} 
+1 & & & \\ 
+0.5 & 1 & & \\ 
+\vdots & \ddots & 1 & \\ 
+0.5 & \cdots & 0.5 & 1 \end{bmatrix}
+\end{aligned}
+$$
+
+**Synthetic data distributions:** (1.) Uncorrelated multivariate normal, (2.) correlated multivariate normal, (3.) correct distribution.
+
+## Density ratios for synthetic data (multivariate)
+
+```{r}
+load("results/sim2.RData")
+
+p1 <- out |>
+  unnest(PE) |>
+  pivot_longer(cols = c(V1, V2, V3),
+               names_to = "Syn",
+               values_to = "PE") |>
+  ggplot(aes(y = PE, x = Syn, group = sim)) +
+  geom_point() +
+  geom_line(alpha = 0.1) +
+  facet_grid(N ~ P)
+
+p2 <- out |>
+  unnest(cart) |>
+  pivot_longer(cols = c(V1, V2, V3),
+               names_to = "Syn",
+               values_to = "S_pMSE_Cart") |>
+  ggplot(aes(y = S_pMSE_Cart, x = Syn, group = sim)) +
+  geom_point() +
+  geom_line(alpha = 0.1) +
+  facet_grid(N ~ P)
+
+p1 + p2
+```
+
+## Density ratios for synthetic data (multivariate)
+
+Proportion of simulations the estimated density ratios and $pMSE$ values are ranked correctly (in terms of quality).
+
+```{r}
+out |>
+  group_by(N, P) |>
+  summarize(PE = map_lgl(PE, ~.x[1] > .x[2] & .x[2] > .x[3]) |> mean(),
+            pMSE = map_lgl(cart, ~.x[1] > .x[2] & .x[2] > .x[3]) |> mean())
+```
+
+## U.S. Current Population Survey (n = 5000)^[I gratefully acknowledge Jörg Drechsler for sharing this data.] {.smaller}
+
+- Four continuous variables (_age, income, social security payments, household property taxes_)
+- Four categorical variables (_gender, race, marital status, level of education_)
+
+### Synthetische data models
+
+**Categorical variables:** (multinomial) logistic regression
+
+**Continuous variables:**
+
+1. Linear regression
+2. Linear regression with transformations (cubic root)
+3. Linear regression with transformations and semi-continuous modeling
+
+## U.S. Current Population Survey
+
+```{r}
+load("results/application.RData")
+
+comb_df <- bind_rows(
+  Real = df,
+  Naive = bind_rows(synlist$unadj$syn), 
+  Transformed = bind_rows(synlist$trans$syn),
+  `Semi-continuous` = bind_rows(synlist$semi$syn),
+  `Smoothed CART` = bind_rows(synlist$smoothed$syn),
+  .id = "Data"
+) |>
+  select(Data,
+         Age = age, 
+         Income = income, 
+         Tax = tax, 
+         `Social security` = ss) |>
+  mutate(Data = factor(Data, levels = c("Real", "Naive", "Transformed", "Semi-continuous", "Smoothed CART")),
+         RealSyn = ifelse(Data == "Real", 1, 2) |> factor(labels = c("Real", "Synthetic")),
+         across(c(Age, Income, Tax, `Social security`), ~abs(.x)^{1/3} * sign(.x))) |>
+  tidyr::pivot_longer(cols = c(Age, Income, Tax, `Social security`), names_to = "Variable")
+
+purrr::map(c("Age", "Income", "Social security", "Tax"), ~
+      ggplot(comb_df |> filter(Variable == .x), aes(x = value, fill = RealSyn, after_stat(density))) +
+      geom_histogram(col = "black", bins = 20) +
+      scale_fill_brewer(palette = "Set2") + 
+      facet_wrap(~Data, ncol = 5) + 
+      theme_minimal() +
+      ylab(.x) +
+      theme(legend.position = "none", 
+            axis.title.x = element_blank(), 
+            strip.text.x = element_text(size = 8),
+            text = element_text(family = "LM Roman 10"))) |>
+  patchwork::wrap_plots(nrow = 5)
+```
+
+
+## Utility of the synthetic data
+
+
+```{r}
+vars <- c("Age", "Income", "Social Security", "Tax", "All")
+
+rbind(
+  data.frame(PE),
+  data.frame(PE_allvars)
+) |>
+  select(Unadjusted = unadj, Transformed = trans, SemiContinuous = semi, CART = smoothed) |> 
+  mutate(Variable = factor(vars, levels = vars, ordered = TRUE)) |>
+  pivot_longer(-Variable, names_to = "SynthesisModel", values_to = "PE") |>
+  ggplot(aes(x = Variable, y = PE, shape = SynthesisModel, col = SynthesisModel)) +
+  geom_point(size = 3) +
+  scale_color_brewer(palette = "Set1") +
+  scale_y_log10()
+```
+
+
+# Additional advantages of density ratios
+
+## Utility scores for individual data points
+
+```{r}
+N <- 1000
+rho <- 0.5
+X1 <- rnorm(N)
+Y1 <- rho * X1 + rnorm(N, 0, sqrt(1 - rho^2))
+X2 <- rnorm(N)
+Y2 <- rnorm(N)
+
+observed <- data.frame(
+  X = X1,
+  Y = Y1
+)
+synthetic <- data.frame(
+  X = X2,
+  Y = Y2
+)
+
+dr <- ulsif(observed, synthetic, lambda = 0.0001)
+w  <- predict(dr, synthetic)
+
+p1 <- ggplot(observed, aes(x = X, y = Y)) +
+  geom_point() +
+  theme_minimal()
+p2 <- ggplot(synthetic, aes(x = X, y = Y, col = w)) +
+  geom_point() +
+  scale_color_viridis_c(option = "D") +
+  theme_minimal()
+
+p1+p2
+```
+
+## Reweighting synthetic data analyses
+
+- These "utility scores" can be used for reweighting synthetic data analyses.
+
+```{r}
+lm_obs <- lm(Y1 ~ X1)
+lm_syn <- lm(Y2 ~ X2)
+lm_w <- lm(Y2 ~ X2, weights = pmax(0.001, w))
+
+coefs <- rbind(coef(lm_obs), coef(lm_syn), coef(lm_w)) |>
+  as.data.frame()
+
+out <- cbind(
+  Method = c("Observed", "Synthetic", "Reweighted"),
+  coefs
+) |>
+  setNames(nm = c("Method", "Intercept", "Slope"))
+
+out
+```
+
+
+## Automatic hyperparameter selection
+
+- Automatic cross-validation implemented in the package
+
+- No model specification required
+
+## Extensions for high-dimensional data
+
+- Semi-supervised learning: estimate the density ratio in a subspace where the observed and synthetic data are most different.
+
+# Thanks for your attention!
+
+Questions?
+
+<br>
+<br>
+
+In case of further questions, please reach out!
+
+[t.b.volker@uu.nl](mailto:t.b.volker@uu.nl)
+
+
