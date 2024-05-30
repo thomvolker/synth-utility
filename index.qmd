@@ -570,7 +570,9 @@ out
 
 ## Extensions for high-dimensional data
 
-- Semi-supervised learning: estimate the density ratio in a subspace where the observed and synthetic data are most different.
+- Dimension reduction: estimate the density ratio in a lower-dimensional subspace.
+
+- Supervised dimension reduction: estimate the density ratio in a subspace where the observed and synthetic data are most different.
 
 # Thanks for your attention!
 
